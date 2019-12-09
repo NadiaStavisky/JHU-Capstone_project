@@ -1,0 +1,616 @@
+---
+title: "Text mining in R. Data Preparation"
+author: "Nadia Stavisky"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = FALSE,
+                      tidy = TRUE,
+                      tidy.opts = list(width.cutoff = 60))
+```
+
+
+```{r install_packages, eval=FALSE}
+# Install
+install.packages("tm")  # for text mining
+install.packages("SnowballC") # for text stemming
+install.packages("wordcloud") # word-cloud generator 
+install.packages("RColorBrewer") # color palettes
+install.packages("slam", type = "binary")
+install.packages("datasets")
+install.packages("tidytext")
+install.packages("RWeka") #N-Gram-based Text Categorization
+install.packages("kableExtra") #Create Awesome HTML Table
+install.packages("textstem") # lemmatize_strings
+```
+```{r load_packages}
+# Load
+library("slam")
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("fs") #dir_info func
+library("tidyverse")
+library("datasets")
+library("ggplot2")
+library("R.utils") #countLines func
+library("tidytext")
+library("RWeka") 
+library("knitr")
+library("kableExtra")
+library("textstem")
+library("readr")
+```
+
+```{r download_data}
+setwd("C:/Users/nstavisky/OneDrive - Facebook/Study/R/Course10")
+home_path <- "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Course10"
+test_link <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+#download.file(test_link, "./Coursera-SwiftKey.zip")
+#unzip("./Coursera-SwiftKey.zip")
+```
+
+Load files and save them as R objects.
+```{r Read Files}
+con_blogs <- file("./final/en_US/en_US.blogs.txt","r")
+con_twit <- file("./final/en_US/en_US.twitter.txt","r")
+con_news <- file("./final/en_US/en_US.news.txt","r")
+
+blogs.txt <- readLines(con_blogs, skipNul=TRUE)
+twitter.txt <- readLines(con_twit, skipNul=TRUE)
+news.txt <- readLines(con_news, skipNul=TRUE)
+
+close(con_blogs)
+close(con_twit)
+close(con_news)
+```
+```{r write_files_to_RDS}
+#dir.create("./final/en_US/RDS_files")
+saveRDS(blogs.txt, "./final/en_US/RDS_files/blogs.Rdata")
+saveRDS(news.txt, "./final/en_US/RDS_files/news.Rdata")
+saveRDS(twitter.txt, "./final/en_US/RDS_files/twitter.Rdata")
+```
+```{r load_Rdata_files}
+blogs.txt <- read_rds("./final/en_US/RDS_files/blogs.Rdata")
+news.txt <- read_rds("./final/en_US/RDS_files/news.Rdata")
+twitter.txt <- read_rds("./final/en_US/RDS_files/twitter.Rdata")
+```
+*Sampling.* Often relatively few randomly selected rows or chunks need to be included to get an accurate approximation to results that would be obtained using all the data. We created a separate sub-sample dataset by reading in a random subset of the original data and writing it out to a separate file. The sample file is stored so that to not have to recreate it every time. 
+Split data into test and train data sets as 30% and 70%.
+```{r train_test}
+set.seed(123)
+#split files on training and test sets
+train_test_set <- function(x,p){
+    inTrain <- rbinom(length(x),1,p) == 1
+    nm <- deparse(substitute(x))
+    sample_train <- x[inTrain]
+    sample_train_name <- paste("train", nm, sep = "_")
+    assign(sample_train_name, sample_train, env=.GlobalEnv)
+    sample_test <- x[!inTrain]
+    sample_test_name <- paste("test", nm, sep = "_")
+    assign(sample_test_name, sample_test, env=.GlobalEnv)
+}
+
+train_test_set(blogs.txt, 0.7)
+train_test_set(news.txt, 0.7)
+train_test_set(twitter.txt, 0.7)
+
+#dir.create("./final/en_US/train_data")
+con_train_blogs <- file("./final/en_US/train_data/train_blogs.txt","w")
+con_train_twit <- file("./final/en_US/train_data/train_twit.txt","w")
+con_train_news <- file("./final/en_US/train_data/train_news.txt","w")
+
+writeLines(train_blogs.txt, con = con_train_blogs)
+writeLines(train_twitter.txt, con = con_train_twit)
+writeLines(train_news.txt, con = con_train_news)
+
+close(con_train_blogs)
+close(con_train_twit)
+close(con_train_news)
+
+#dir.create("./final/en_US/test_data")
+con_test_blogs <- file("./final/en_US/test_data/test_blogs.txt","w")
+con_test_twit <- file("./final/en_US/test_data/test_twit.txt","w")
+con_test_news <- file("./final/en_US/test_data/test_news.txt","w")
+
+writeLines(test_blogs.txt, con = con_test_blogs)
+writeLines(test_twitter.txt, con = con_test_twit)
+writeLines(test_news.txt, con = con_test_news)
+
+close(con_test_blogs)
+close(con_test_twit)
+close(con_test_news)
+
+saveRDS(train_blogs.txt, "./final/en_US/RDS_files/train_blogs.Rdata")
+saveRDS(train_news.txt, "./final/en_US/RDS_files/train_news.Rdata")
+saveRDS(train_twitter.txt, "./final/en_US/RDS_files/train_twitter.Rdata")
+
+saveRDS(test_blogs.txt, "./final/en_US/RDS_files/test_blogs.Rdata")
+saveRDS(test_news.txt, "./final/en_US/RDS_files/test_news.Rdata")
+saveRDS(test_twitter.txt, "./final/en_US/RDS_files/test_twitter.Rdata")
+```
+```{r load_Rdata_files_train_test}
+train_blogs.txt <- read_rds("./final/en_US/RDS_files/train_blogs.Rdata")
+train_news.txt <- read_rds("./final/en_US/RDS_files/train_news.Rdata")
+train_twitter.txt <- read_rds("./final/en_US/RDS_files/train_twitter.Rdata")
+
+test_blogs.txt <- read_rds("./final/en_US/RDS_files/test_blogs.Rdata")
+test_news.txt <- read_rds("./final/en_US/RDS_files/test_news.Rdata")
+test_twitter.txt <- read_rds("./final/en_US/RDS_files/test_train_twitter.Rdata")
+
+```
+From Train data set select sample (~80K lines)
+```{r sample and remove non-ASCII encoding}
+
+sample <- function(x,p){
+    inTrain <- rbinom(length(x),1,p) == 1
+    nm <- deparse(substitute(x))
+    sample <- x[inTrain]
+    remain <- x[!inTrain]
+    sample <- iconv(sample, "latin1", "ASCII", sub="")
+    sample_name <- paste("sample", nm, sep = "_")
+    assign(sample_name, sample, env=.GlobalEnv)
+    sample2_name <- paste("remain2", nm, sep = "_")
+    assign(sample2_name, remain, env=.GlobalEnv)
+}
+
+sample(train_blogs.txt, 0.01) # 1% from en_US.blogs.txt ~ 6K
+sample(train_news.txt, 0.2) # 20% from en_US.news.txt ~ 10K
+sample(train_twitter.txt, 0.005) # 0.5% from en_US.twitter.txt ~ 8K
+rm(train_blogs.txt, train_news.txt, train_twitter.txt)
+rm(test_blogs.txt, test_news.txt, test_twitter.txt)
+
+saveRDS(sample_train_blogs.txt, "./final/en_US/RDS_files/sample_train_blogs.Rdata")
+saveRDS(sample_train_news.txt, "./final/en_US/RDS_files/sample_train_news.Rdata")
+saveRDS(sample_train_twitter.txt, "./final/en_US/RDS_files/sample_train_twitter.Rdata")
+
+saveRDS(remain2_train_blogs.txt, "./final/en_US/RDS_files/remain2_train_blogs.Rdata")
+saveRDS(remain2_train_news.txt, "./final/en_US/RDS_files/remain2_train_news.Rdata")
+saveRDS(remain2_train_twitter.txt, "./final/en_US/RDS_files/remain2_train_twitter.Rdata")
+```
+```{r load_Rdata_files_train_test}
+sample_train_blogs.txt <- read_rds("./final/en_US/RDS_files/sample_train_blogs.Rdata")
+sample_train_news.txt <- read_rds("./final/en_US/RDS_files/sample_train_news.Rdata")
+sample_train_twitter.txt <- read_rds("./final/en_US/RDS_files/sample_train_twitter.Rdata")
+
+remain2_train_blogs.txt <- read_rds("./final/en_US/RDS_files/remain2_train_blogs.Rdata")
+remain2_train_news.txt <- read_rds("./final/en_US/RDS_files/remain2_train_news.Rdata")
+remain2_train_twitter.txt <- read_rds("./final/en_US/RDS_files/remain2_train_twitter.Rdata")
+
+```
+```{r sample2 and remove non-ASCII encoding}
+sample2 <- function(x,p){
+    inTrain <- rbinom(length(x),1,p) == 1
+    nm <- deparse(substitute(x))
+    sample <- x[inTrain]
+    remain <- x[!inTrain]
+    sample <- iconv(sample, "latin1", "ASCII", sub="")
+    sample_name <- paste("sample2", nm, sep = "_")
+    assign(sample_name, sample, env=.GlobalEnv)
+    sample2_name <- paste("remain3", nm, sep = "_")
+    assign(sample2_name, remain, env=.GlobalEnv)
+}
+
+
+sample2(remain2_train_blogs.txt, 0.01) # 1% from en_US.blogs.txt ~ 6K
+sample2(remain2_train_news.txt, 0.2) # 20% from en_US.news.txt ~ 8.5K
+sample2(remain2_train_twitter.txt, 0.005) # 0.5% from en_US.twitter.txt ~ 8K
+rm(remain2_train_blogs.txt, remain2_train_news.txt, remain2_train_twitter.txt)
+
+saveRDS(sample2_remain2_train_blogs.txt, "./final/en_US/RDS_files/sample2_remain2_train_blogs.Rdata")
+saveRDS(sample2_remain2_train_news.txt, "./final/en_US/RDS_files/sample2_remain2_train_news.Rdata")
+saveRDS(sample2_remain2_train_twitter.txt, "./final/en_US/RDS_files/sample2_remain2_train_twitter.Rdata")
+
+saveRDS(remain3_remain2_train_blogs.txt, "./final/en_US/RDS_files/remain3_remain2_train_blogs.Rdata")
+saveRDS(remain3_remain2_train_news.txt, "./final/en_US/RDS_files/remain3_remain2_train_news.Rdata")
+saveRDS(remain3_remain2_train_twitter.txt, "./final/en_US/RDS_files/remain3_remain2_train_twitter.Rdata")
+```
+```{r load_Rdata_files_train_test}
+sample2_remain2_train_blogs.txt <- read_rds("./final/en_US/RDS_files/sample2_remain2_train_blogs.Rdata")
+sample2_remain2_train_news.txt <- read_rds("./final/en_US/RDS_files/sample2_remain2_train_news.Rdata")
+sample2_remain2_train_twitter.txt <- read_rds("./final/en_US/RDS_files/sample2_remain2_train_twitter.Rdata")
+
+remain3_remain2_train_blogs.txt <- read_rds("./final/en_US/RDS_files/remain3_remain2_train_blogs.Rdata")
+remain3_remain2_train_news.txt <- read_rds("./final/en_US/RDS_files/remain3_remain2_train_news.Rdata")
+remain3_remain2_train_twitter.txt <- read_rds("./final/en_US/RDS_files/remain3_remain2_train_twitter.Rdata")
+
+```
+```{r sample3 and remove non-ASCII encoding}
+sample3 <- function(x,p){
+    inTrain <- rbinom(length(x),1,p) == 1
+    nm <- deparse(substitute(x))
+    sample <- x[inTrain]
+    remain <- x[!inTrain]
+    sample <- iconv(sample, "latin1", "ASCII", sub="")
+    sample_name <- paste("sample3", nm, sep = "_")
+    assign(sample_name, sample, env=.GlobalEnv)
+    sample2_name <- paste("remain4", nm, sep = "_")
+    assign(sample2_name, remain, env=.GlobalEnv)
+}
+
+sample3(remain3_remain2_train_blogs.txt, 0.01) # 1% from en_US.blogs.txt ~ 6K
+sample3(remain3_remain2_train_news.txt, 0.3) # 30% from en_US.news.txt ~ 10K
+sample3(remain3_remain2_train_twitter.txt, 0.01) # 1% from en_US.twitter.txt ~ 16K
+rm(remain3_remain2_train_blogs.txt, remain3_remain2_train_news.txt, remain3_remain2_train_twitter.txt)
+
+
+saveRDS(sample3_remain3_remain2_train_blogs.txt, "./final/en_US/RDS_files/sample3_remain3_remain2_train_blogs.Rdata")
+saveRDS(sample3_remain3_remain2_train_news.txt, "./final/en_US/RDS_files/sample3_remain3_remain2_train_news.Rdata")
+saveRDS(sample3_remain3_remain2_train_twitter.txt, "./final/en_US/RDS_files/sample3_remain3_remain2_train_twitter.Rdata")
+
+saveRDS(remain4_remain3_remain2_train_blogs.txt, "./final/en_US/RDS_files/remain4_remain3_remain2_train_blogs.Rdata")
+saveRDS(remain4_remain3_remain2_train_news.txt, "./final/en_US/RDS_files/remain4_remain3_remain2_train_news.Rdata")
+saveRDS(remain4_remain3_remain2_train_twitter.txt, "./final/en_US/RDS_files/remain4_remain3_remain2_train_twitter.Rdata")
+```
+```{r load_Rdata_files_train_test}
+sample3_remain3_remain2_train_blogs.txt <- read_rds("./final/en_US/RDS_files/sample3_remain3_remain2_train_blogs.Rdata")
+sample3_remain3_remain2_train_news.txt <- read_rds("./final/en_US/RDS_files/sample3_remain3_remain2_train_news.Rdata")
+sample3_remain3_remain2_train_twitter.txt <- read_rds("./final/en_US/RDS_files/sample3_remain3_remain2_train_twitter.Rdata")
+
+remain4_remain3_remain2_train_blogs.txt <- read_rds("./final/en_US/RDS_files/remain4_remain3_remain2_train_blogs.Rdata")
+remain4_remain3_remain2_train_news.txt <- read_rds("./final/en_US/RDS_files/remain4_remain3_remain2_train_news.Rdata")
+remain4_remain3_remain2_train_twitter.txt <- read_rds("./final/en_US/RDS_files/remain4_remain3_remain2_train_twitter.Rdata")
+
+```
+```{r sample_data_combine}
+sample_data <- c(sample_train_blogs.txt, sample_train_news.txt, sample_train_twitter.txt)
+rm(sample_train_blogs.txt, sample_train_news.txt, sample_train_twitter.txt)
+sample2_data <- c(sample2_remain2_train_blogs.txt, sample2_remain2_train_news.txt, sample2_remain2_train_twitter.txt)
+rm(sample2_remain2_train_blogs.txt, sample2_remain2_train_news.txt, sample2_remain2_train_twitter.txt)
+sample3_data <- c(sample3_remain3_remain2_train_blogs.txt, sample3_remain3_remain2_train_news.txt, sample3_remain3_remain2_train_twitter.txt)
+rm(sample3_remain3_remain2_train_blogs.txt, sample3_remain3_remain2_train_news.txt, sample3_remain3_remain2_train_twitter.txt)
+#dir.create("./final/en_US/sample")
+con_sample <- file("./final/en_US/sample/sample_data.txt","w")
+writeLines(sample_data, con = con_sample)
+close(con_sample)
+con_sample2 <- file("./final/en_US/sample2/sample2_data.txt","w")
+writeLines(sample2_data, con = con_sample)
+close(con_sample2)
+#dir.create("./final/en_US/sample3")
+con_sample3 <- file("./final/en_US/sample3/sample3_data.txt","w")
+writeLines(sample3_data, con = con_sample)
+close(con_sample3)
+
+sample <- c(sample_data, sample2_data, sample3_data)
+
+#dir.create("./final/en_US/sample_all")
+con_sample_all <- file("./final/en_US/sample_all/sample3_data.txt","w")
+writeLines(sample, con = con_sample_all)
+close(con_sample_all)
+
+saveRDS(sample_data, "./final/en_US/RDS_files/sample_data.Rdata")
+saveRDS(sample2_data, "./final/en_US/RDS_files/sample2_data.Rdata")
+saveRDS(sample3_data, "./final/en_US/RDS_files/sample3_data.Rdata")
+```
+
+```{r load_sample_data_RDS}
+sample_data <- read_rds("./final/en_US/RDS_files/sample_data.Rdata")
+sample2_data <- read_rds("./final/en_US/RDS_files/sample2_data.Rdata")
+sample3_data <- read_rds("./final/en_US/RDS_files/sample3_data.Rdata")
+```
+
+
+Sample data set cleaning: 
+- removed [swearWords](http://www.bannedwordlist.com/lists/swearWords.txt) and [bad-words](https://www.cs.cmu.edu/~biglou/resources/bad-words.txt)(*Profanity filtering* - removing profanity and other words we do not want to predict);
+```{r profanity_filtering}
+# Load the data as a corpus
+
+corpus_data <- VCorpus(DirSource(directory = "./final/en_US/sample", mode = "text"))
+corpus_data2 <- VCorpus(DirSource(directory = "./final/en_US/sample2", mode = "text"))
+corpus_data3 <- VCorpus(DirSource(directory = "./final/en_US/sample3", mode = "text"))
+
+#swearWords_link <- "http://www.bannedwordlist.com/lists/swearWords.txt"
+#download.file(swearWords_link, "./swearWords.txt", method = "curl")
+#bad_words_link <- "https://www.cs.cmu.edu/~biglou/resources/bad-words.txt"
+#download.file(bad_words_link, "./bad_words.txt", method = "curl")
+swearWords <- read.delim("./swearWords.txt", header = FALSE)
+bad_words <- read.delim("./bad_words.txt", header = FALSE)
+
+profanity_list <- unique(c(as.character(swearWords$V1), as.character(bad_words$V1)))
+corpus_data <- tm_map(corpus_data, removeWords, profanity_list)
+corpus_data2 <- tm_map(corpus_data2, removeWords, profanity_list)
+corpus_data3 <- tm_map(corpus_data3, removeWords, profanity_list)
+
+corpus_data_arch <- corpus_data
+corpus_data2_arch <- corpus_data2
+corpus_data3_arch <- corpus_data3
+
+corpus_data <- corpus_data_arch
+corpus_data2 <- corpus_data2_arch
+corpus_data3 <- corpus_data3_arch
+
+saveRDS(corpus_data, "./final/en_US/RDS_files/corpus_data_noprof.Rdata")
+saveRDS(corpus_data2, "./final/en_US/RDS_files/corpus_data2_noprof.Rdata")
+saveRDS(corpus_data3, "./final/en_US/RDS_files/corpus_data3_noprof.Rdata")
+```
+
+```{r load_corpus_data_RDS}
+corpus_data_noprof <- read_rds("./final/en_US/RDS_files/corpus_data_noprof.Rdata")
+corpus_data2_noprof <- read_rds("./final/en_US/RDS_files/corpus_data2_noprof.Rdata")
+corpus_data3_noprof <- read_rds("./final/en_US/RDS_files/corpus_data3_noprof.Rdata")
+```
+
+Data cleaning steps:  
+- Convert the text to lower case;  
+- Remove numbers;  
+- Remove english common stopwords;  
+- Remove punctuations;  
+- Eliminate extra white spaces;  
+- Remove single letter words;  
+- Remove words with 3 or more repeated letters;  
+- Text lemmatization (different from steaming in a way that it takes into consideration the morphological analysis of the words).  
+```{r cleaning_train_data}
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+CleanCorpus <- function(corpus_data) {
+    # Convert the text to lower case
+    corpus_data <- tm_map(corpus_data, content_transformer(tolower))
+    # Remove numbers
+    corpus_data <- tm_map(corpus_data, content_transformer(removeNumbers))
+    # Remove english common stopwords
+    #corpus_data <- tm_map(corpus_data, removeWords, stopwords("english"))
+    # Remove punctuations
+    corpus_data <- tm_map(corpus_data, content_transformer(removePunctuation))
+    # Eliminate extra white spaces
+    corpus_data <- tm_map(corpus_data, stripWhitespace)
+    # removes any words with 3 or more repeated letters
+    corpus_data <- tm_map(corpus_data, toSpace, "(.)\\1{2,}")
+    # removes any remaining single letter words
+    corpus_data <- tm_map(corpus_data, toSpace, "\\b(.)\\b")
+    # removes any repeated prases
+    corpus_data <- tm_map(corpus_data, toSpace,"(\\W|^)(.+)\\s\\2")
+    # removes any words with numeric digits
+    corpus_data <- tm_map(corpus_data, toSpace, "[[:digit:]]")
+    # Text lemmatize_string
+    corpus_data <- tm_map(corpus_data, lemmatize_strings)
+    corpus_data <- tm_map(corpus_data, PlainTextDocument) # in order to create a document-term matrix, you need to have 'PlainTextDocument'
+    return(corpus_data)
+}
+
+corpus_data <- CleanCorpus(corpus_data)
+corpus_data2 <- CleanCorpus(corpus_data2)
+corpus_data3 <- CleanCorpus(corpus_data3)
+
+saveRDS(corpus_data, "./final/en_US/RDS_files/corpus_data_nostop.Rdata")
+saveRDS(corpus_data2, "./final/en_US/RDS_files/corpus_data2_nostop.Rdata")
+saveRDS(corpus_data3, "./final/en_US/RDS_files/corpus_data3_nostop.Rdata")
+```
+
+```{r load_corpus_data_RDS}
+corpus_data <- read_rds("./final/en_US/RDS_files/corpus_data.Rdata")
+corpus_data2 <- read_rds("./final/en_US/RDS_files/corpus_data2.Rdata")
+corpus_data3 <- read_rds("./final/en_US/RDS_files/corpus_data3.Rdata")
+```
+
+```{r load_corpus_data_noStopEn_RDS}
+corpus_data <- read_rds("./final/en_US/RDS_files/corpus_data_nostop.Rdata")
+corpus_data2 <- read_rds("./final/en_US/RDS_files/corpus_data2_nostop.Rdata")
+corpus_data3 <- read_rds("./final/en_US/RDS_files/corpus_data3_nostop.Rdata")
+```
+
+For the "next word" prediction model we will keep stop words as they play important part in the language.
+
+# Unit 2 Exploratory Data Analysis
+
+## Tasks to accomplish
+
+Exploratory analysis - performed an exploratory analysis of the data for understanding the distribution of words and relationship between the words in the sample text document.
+To understand frequencies of words and word pairs - build figures and tables that demonstarates frequencies of words and word pairs in the data.
+
+Some words are more frequent than others - what are the distributions of word frequencies?  
+The top 10 most frequent words from sample dataset:
+```{r unigramToken}
+UnigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 1, max = 1))
+
+tdm <- TermDocumentMatrix(corpus_data,
+                          control = list(tokenize = UnigramTokenizer))
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+Unigramdf1 <- data.frame(word = names(v),freq=v)
+
+tdm <- TermDocumentMatrix(corpus_data2,
+                          control = list(tokenize = UnigramTokenizer))
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+Unigramdf2 <- data.frame(word = names(v),freq=v)
+
+tdm <- TermDocumentMatrix(corpus_data3,
+                          control = list(tokenize = UnigramTokenizer))
+m <- as.matrix(tdm)
+v <- sort(rowSums(m),decreasing=TRUE)
+Unigramdf3 <- data.frame(word = names(v),freq=v)
+
+Unigramdf <- rbind(Unigramdf1, Unigramdf2, Unigramdf3) %>%
+    filter(freq > 0) %>%
+    group_by(word) %>% summarize(freq = sum(freq)) %>%
+    arrange(desc(freq))
+
+df <- head(Unigramdf, 10)
+row.names(df) <- NULL
+kable(df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+#inspect(tdm)
+saveRDS(Unigramdf, "./final/en_US/RDS_files/Unigramdf.Rdata")
+```
+
+```{r 1-gram_plot, fig.align = "center", fig.width = 8, fig.height = 5}
+#Generate the Word cloud
+set.seed(1234)
+wordcloud(words = Unigramdf$word, freq = Unigramdf$freq, min.freq = 100,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+par(mar = c(15,4,4,2) + 0.1)
+#Plot word frequencies
+barplot(Unigramdf[1:15,]$freq, las = 2, names.arg = Unigramdf[1:15,]$word,
+        col ="lightblue", main ="Most frequent words",
+        ylab = "Word frequencies")
+
+
+```
+
+
+What are the frequencies of 2-grams and 3-grams in the dataset?  
+The top 10 most frequent 2-grams tokens from sample dataset:  
+```{r bigramToken}
+#memory.limit(size = 40000)
+BigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 2, max = 2))
+
+tdm2 <- TermDocumentMatrix(corpus_data,
+                          control = list(tokenize = BigramTokenizer))
+m2 <- as.matrix(tdm2)
+v2 <- sort(rowSums(m2),decreasing=TRUE)
+Bigramdf1 <- data.frame(word = names(v2),freq=v2)
+
+tdm2 <- TermDocumentMatrix(corpus_data2,
+                          control = list(tokenize = BigramTokenizer))
+m2 <- as.matrix(tdm2)
+v2 <- sort(rowSums(m2),decreasing=TRUE)
+Bigramdf2 <- data.frame(word = names(v2),freq=v2)
+
+tdm2 <- TermDocumentMatrix(corpus_data3,
+                          control = list(tokenize = BigramTokenizer))
+m2 <- as.matrix(tdm2)
+v2 <- sort(rowSums(m2),decreasing=TRUE)
+Bigramdf3 <- data.frame(word = names(v2),freq=v2)
+
+Bigramdf <- rbind(Bigramdf1, Bigramdf2, Bigramdf3) %>%
+    filter(freq > 0) %>%
+    group_by(word) %>% summarize(freq = sum(freq)) %>%
+    arrange(desc(freq))
+
+df <- head(Bigramdf, 10)
+row.names(df) <- NULL
+kable(df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+saveRDS(Bigramdf, "./final/en_US/RDS_files/Bigramdf.Rdata")
+```
+
+
+```{r 2-grams_plot, fig.align = "center", fig.width = 8, fig.height = 5}
+#Generate the Word cloud
+set.seed(1234)
+wordcloud(words = Bigramdf$word, freq = Bigramdf$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+par(mar = c(15,4,4,2) + 0.1)
+#Plot word frequencies
+barplot(Bigramdf[1:15,]$freq, las = 2, names.arg = Bigramdf[1:15,]$word,
+        col ="lightblue", main ="Most frequent 2-grams",
+        ylab = "2-grams frequencies")
+
+```
+
+The top 10 most frequent 3-grams tokens from sample dataset:
+
+```{r TrigramToken}
+TrigramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 3, max = 3))
+
+tdm3 <- TermDocumentMatrix(corpus_data,
+                          control = list(tokenize = TrigramTokenizer))
+m3 <- as.matrix(tdm3)
+v3 <- sort(rowSums(m3),decreasing=TRUE)
+Trigramdf1 <- data.frame(word = names(v3),freq=v3)
+
+tdm3 <- TermDocumentMatrix(corpus_data2,
+                          control = list(tokenize = TrigramTokenizer))
+m3 <- as.matrix(tdm3)
+v3 <- sort(rowSums(m3),decreasing=TRUE)
+Trigramdf2 <- data.frame(word = names(v3),freq=v3)
+
+tdm3 <- TermDocumentMatrix(corpus_data3,
+                          control = list(tokenize = TrigramTokenizer))
+m3 <- as.matrix(tdm3)
+v3 <- sort(rowSums(m3),decreasing=TRUE)
+Trigramdf3 <- data.frame(word = names(v3),freq=v3)
+
+Trigramdf <- rbind(Trigramdf1, Trigramdf2, Trigramdf3) %>%
+    filter(freq > 0) %>%
+    group_by(word) %>% summarize(freq = sum(freq)) %>%
+    arrange(desc(freq))
+
+df<- head(Trigramdf, 10)
+row.names(df) <- NULL
+kable(df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+
+saveRDS(Trigramdf, "./final/en_US/RDS_files/Trigramdf.Rdata")
+```
+
+
+```{r 3-grams_plot, fig.align = "center", fig.width = 8, fig.height = 5}
+#Generate the Word cloud
+set.seed(1234)
+wordcloud(words = Trigramdf$word, freq = Trigramdf$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+par(mar = c(15,4,4,2) + 0.1)
+#Plot word frequencies
+barplot(Trigramdf[1:15,]$freq, las = 2, names.arg = Trigramdf[1:15,]$word,
+        col ="lightblue", main ="Most frequent 3-grams",
+        ylab = "3-grams frequencies")
+```
+
+How many unique words do you need in a frequency sorted dictionary to cover 50% of all word instances in the language? 90%?
+```{r word_coverage}
+word_cover <- function(Xgram, coverage){
+    cumfreq <- 0
+    Xgramsorted <- Xgram[order(-Unigramdf$freq),]
+    for(i in 1:length(Xgramsorted$freq)){
+        cumfreq <- cumfreq + Xgramsorted$freq[i]
+        if(cumfreq >= coverage * sum(Xgramsorted$freq)){break}
+    }
+    return(i)    
+}
+
+cover50 <- word_cover(Unigramdf, 0.5)
+cover90 <- word_cover(Unigramdf, 0.9)
+
+```
+There are _`r cover50`_ and _`r cover90`_ words needed to cover _50%_ and _90%_ of all word instances in the language accordingly.
+
+**Next steps:**
+
+# Unit 3 Modeling
+
+## Tasks to accomplish
+
+Build basic n-gram model - using the exploratory analysis you performed, build a basic n-gram model for predicting the next word based on the previous 1, 2, or 3 words.  
+Build a model to handle unseen n-grams - in some cases people will want to type a combination of words that does not appear in the corpora. Build a model to handle cases where a particular n-gram isn't observed.  
+```{r QrigramToken}
+QgramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 4, max = 4))
+
+tdm4 <- TermDocumentMatrix(corpus_data,
+                          control = list(tokenize = QgramTokenizer))
+m4 <- as.matrix(tdm4)
+v4 <- sort(rowSums(m4),decreasing=TRUE)
+Qgramdf1 <- data.frame(word = names(v4),freq=v4)
+
+tdm4 <- TermDocumentMatrix(corpus_data2,
+                          control = list(tokenize = QgramTokenizer))
+m4 <- as.matrix(tdm4)
+v4 <- sort(rowSums(m4),decreasing=TRUE)
+Qgramdf2 <- data.frame(word = names(v4),freq=v4)
+
+tdm4 <- TermDocumentMatrix(corpus_data3,
+                          control = list(tokenize = QgramTokenizer))
+m4 <- as.matrix(tdm4)
+v4 <- sort(rowSums(m4),decreasing=TRUE)
+Qgramdf3 <- data.frame(word = names(v4),freq=v4)
+
+Qgramdf <- rbind(Qgramdf1, Qgramdf2, Qgramdf3) %>%
+    filter(freq > 0) %>%
+    group_by(word) %>% summarize(freq = sum(freq)) %>%
+    arrange(desc(freq))
+
+df<- head(Qgramdf, 10)
+row.names(df) <- NULL
+kable(df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+saveRDS(Qgramdf, "./final/en_US/RDS_files/Qgramdf.Rdata")
+```

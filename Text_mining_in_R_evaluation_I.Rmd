@@ -1,0 +1,548 @@
+---
+title: "Text mining in R: Evaluation"
+author: "Nadia Stavisky"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = FALSE,
+                      tidy = TRUE,
+                      tidy.opts = list(width.cutoff = 60))
+```
+
+
+```{r install_packages, eval=FALSE}
+# Install
+install.packages("tm")  # for text mining
+install.packages("SnowballC") # for text stemming
+install.packages("wordcloud") # word-cloud generator 
+install.packages("RColorBrewer") # color palettes
+install.packages("slam", type = "binary")
+install.packages("datasets")
+install.packages("tidytext")
+install.packages("RWeka") #N-Gram-based Text Categorization
+install.packages("kableExtra") #Create Awesome HTML Table
+install.packages("textstem") # lemmatize_strings
+```
+```{r load_packages}
+# Load
+library("slam")
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("fs") #dir_info func
+library("tidyverse")
+library("datasets")
+library("ggplot2")
+library("R.utils") #countLines func
+library("tidytext")
+library("RWeka") 
+library("knitr")
+library("kableExtra")
+library("textstem")
+library("readr")
+```
+
+Obtaining the data: 
+- download the test data set in to R; 
+
+```{r download_data}
+setwd("C:/Users/nstavisky/OneDrive - Facebook/Study/R/Course10")
+
+```
+
+```{r load_Rdata_files_train_test}
+test_blogs.txt <- read_rds("./final/en_US/RDS_files/test_blogs.Rdata")
+test_news.txt <- read_rds("./final/en_US/RDS_files/test_news.Rdata")
+test_twitter.txt <- read_rds("./final/en_US/RDS_files/test_twitter.Rdata")
+
+```
+```{r test sample and remove non-ASCII encoding}
+
+sample <- function(x,p){
+    inTrain <- rbinom(length(x),1,p) == 1
+    nm <- deparse(substitute(x))
+    sample <- x[inTrain]
+    remain <- x[!inTrain]
+    sample <- iconv(sample, "latin1", "ASCII", sub="")
+    sample_name <- paste("sample", nm, sep = "_")
+    assign(sample_name, sample, env=.GlobalEnv)
+    sample2_name <- paste("remain2", nm, sep = "_")
+    assign(sample2_name, remain, env=.GlobalEnv)
+}
+```
+```{r save_rds_tests}
+sample(test_blogs.txt, 0.01) # 1% from en_US.blogs.txt ~ 6K
+sample(test_news.txt, 0.2) # 20% from en_US.news.txt ~ 10K
+sample(test_twitter.txt, 0.005) # 0.5% from en_US.twitter.txt ~ 8K
+rm(test_blogs.txt, test_news.txt, test_twitter.txt)
+
+saveRDS(sample_test_blogs.txt, "./final/en_US/RDS_files/sample_test_blogs.Rdata")
+saveRDS(sample_test_news.txt, "./final/en_US/RDS_files/sample_test_news.Rdata")
+saveRDS(sample_test_twitter.txt, "./final/en_US/RDS_files/sample_test_twitter.Rdata")
+
+saveRDS(remain2_test_blogs.txt, "./final/en_US/RDS_files/remain2_test_blogs.Rdata")
+saveRDS(remain2_test_news.txt, "./final/en_US/RDS_files/remain2_test_news.Rdata")
+saveRDS(remain2_test_twitter.txt, "./final/en_US/RDS_files/remain2_test_twitter.Rdata")
+```
+
+```{r sample_test_data_combine}
+sample_test_data <- c(sample_test_blogs.txt, sample_test_news.txt, sample_test_twitter.txt)
+rm(sample_test_blogs.txt, sample_test_news.txt, sample_test_twitter.txt)
+
+#dir.create("./final/en_US/sample_test")
+con_sample_test <- file("./final/en_US/sample_test/sample_data.txt","w")
+writeLines(sample_test_data, con = con_sample_test)
+close(con_sample_test)
+
+saveRDS(sample_test_data, "./final/en_US/RDS_files/sample_test_data.Rdata")
+```
+
+```{r load_sample_data_RDS}
+sample_test_data <- read_rds("./final/en_US/RDS_files/sample_test_data.Rdata")
+```
+
+
+Sample test data set cleaning: 
+- removed [swearWords](http://www.bannedwordlist.com/lists/swearWords.txt) and [bad-words](https://www.cs.cmu.edu/~biglou/resources/bad-words.txt)(*Profanity filtering* - removing profanity and other words we do not want to predict);
+```{r profanity_filtering}
+# Load the data as a corpus
+#concatenating the training samples together
+
+corpus_test_data <- VCorpus(DirSource(directory = "./final/en_US/sample_test", mode = "text"))
+
+swearWords <- read.delim("./swearWords.txt", header = FALSE)
+bad_words <- read.delim("./bad_words.txt", header = FALSE)
+
+profanity_list <- unique(c(as.character(swearWords$V1), as.character(bad_words$V1)))
+corpus_test_data <- tm_map(corpus_test_data, removeWords, profanity_list)
+
+corpus_test_data_arch <- corpus_test_data
+
+saveRDS(corpus_test_data, "./final/en_US/RDS_files/corpus_test_data_noprof.Rdata")
+```
+
+```{r load_corpus_data_RDS}
+corpus_test_data_noprof <- read_rds("./final/en_US/RDS_files/corpus_test_data_noprof.Rdata")
+```
+
+Test Data cleaning steps:  
+- Convert the text to lower case;  
+- Remove numbers;  
+- Remove english common stopwords;  
+- Remove punctuations;  
+- Eliminate extra white spaces;  
+- Remove single letter words;  
+- Remove words with 3 or more repeated letters;  
+- Text lemmatization (different from steaming in a way that it takes into consideration the morphological analysis of the words).  
+```{r cleaning_train_data}
+#corpus_data_arch[["sample_data.txt"]][["content"]][1230:1233]
+#corpus_data[["sample_data.txt"]][["content"]][1230:1233]
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+CleanCorpus <- function(corpus_data) {
+    # Convert the text to lower case
+    corpus_data <- tm_map(corpus_data, content_transformer(tolower))
+    # Remove numbers
+    corpus_data <- tm_map(corpus_data, content_transformer(removeNumbers))
+    # Remove english common stopwords
+    #corpus_data <- tm_map(corpus_data, removeWords, stopwords("english"))
+    # Remove punctuations
+    corpus_data <- tm_map(corpus_data, content_transformer(removePunctuation))
+    # Eliminate extra white spaces
+    corpus_data <- tm_map(corpus_data, stripWhitespace)
+    # removes any words with 3 or more repeated letters
+    corpus_data <- tm_map(corpus_data, toSpace, "(.)\\1{2,}")
+    # removes any remaining single letter words
+    corpus_data <- tm_map(corpus_data, toSpace, "\\b(.)\\b")
+    # removes any repeated prases
+    corpus_data <- tm_map(corpus_data, toSpace,"(\\W|^)(.+)\\s\\2")
+    # removes any words with numeric digits
+    corpus_data <- tm_map(corpus_data, toSpace, "[[:digit:]]")
+    # Text lemmatize_string
+    corpus_data <- tm_map(corpus_data, lemmatize_strings)
+    corpus_data <- tm_map(corpus_data, PlainTextDocument) # in order to create a document-term matrix, you need to have 'PlainTextDocument'
+    return(corpus_data)
+}
+
+corpus_test_data <- CleanCorpus(corpus_test_data_noprof)
+
+saveRDS(corpus_test_data, "./final/en_US/RDS_files/corpus_test_data_wstop.Rdata")
+
+```
+
+```{r load_corpus_data_RDS}
+corpus_test_data <- read_rds("./final/en_US/RDS_files/corpus_test_data_wstop.Rdata")
+```
+
+Evaluate the model for efficiency and accuracy - use timing software to evaluate the computational complexity of your model. Evaluate the model accuracy using different metrics like perplexity, accuracy at the first word, second word, and third word.
+
+Efficiency - The run time of a chunk of code can be measured by taking the difference between the time at the start and at the end of the code chunk:
+start_time <- Sys.time()
+code
+end_time <- Sys.time()
+Run time = end_time - start_time
+
+Accuracy on a test set - the percentage of the time the model predicts the next word. We can see whether the test completion matches the top-ranked predicted completion (top-1 accuracy) or use a looser metric: is the actual test completion in the top-2-ranked, top-3-ranked predicted completions?
+
+The test set was count-vectorizedinto 4-grams:
+
+```{r QrigramToken_test}
+QgramTokenizer <- function(x) NGramTokenizer(x, Weka_control(min = 4, max = 4))
+
+tdm4 <- TermDocumentMatrix(corpus_test_data,
+                          control = list(tokenize = QgramTokenizer))
+m4 <- as.matrix(tdm4)
+#v4 <- sort(rowSums(m4),decreasing=TRUE) for testing we do not need to aggregate df 
+v4 <- data.frame(m4)
+head(v4[,1])
+Qgramdf_test <- data.frame(word = row.names(v4),freq=v4[,1])
+
+df<- head(Qgramdf_test, 10)
+row.names(df) <- NULL
+kable(df) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+saveRDS(Qgramdf_test, "./final/en_US/RDS_files/Qgramdf_test.Rdata")
+```
+
+```{r Qgramdf_test_modified}
+Qgramdf_test <- read_rds("./final/en_US/RDS_files/Qgramdf_test.Rdata")
+Qgramdf_test <- Qgramdf_test %>% group_by(word) %>%
+    summarize(freq = sum(freq)) %>% ungroup()
+Qgramdf_test <- Qgramdf_test %>% filter(freq > 1)
+```
+
+
+
+
+
+```{r load_Ngram_RDS}
+Unigramdf <- read_rds("./final/en_US/RDS_files/Unigramdf.Rdata")
+Bigramdf <- read_rds("./final/en_US/RDS_files/Bigramdf.Rdata")
+Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+#Qgramdf_test_whole <- read_rds("./final/en_US/RDS_files/Qgramdf_test.Rdata")
+```
+
+```{r cleaning_input}
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+CleanInput <- function(input) {
+    input <- iconv(input, "latin1", "ASCII", sub="")
+    corpus_input <- VCorpus(VectorSource(input))
+    # Convert the text to lower case
+    corpus_input <- tm_map(corpus_input, content_transformer(tolower))
+    # Remove numbers
+    corpus_input <- tm_map(corpus_input, removeNumbers)
+    # Remove english common stopwords
+    #corpus_input <- tm_map(corpus_input, removeWords, stopwords("english"))
+    # Remove punctuations
+    corpus_input <- tm_map(corpus_input, removePunctuation)
+    # Eliminate extra white spaces
+    corpus_input <- tm_map(corpus_input, stripWhitespace)
+    # removes any words with 3 or more repeated letters
+    corpus_input <- tm_map(corpus_input, toSpace, "(.)\\1{2,}")
+    # removes any remaining single letter words
+    corpus_input <- tm_map(corpus_input, toSpace, "\\b(.)\\b")
+    # removes any repeated prases
+    corpus_input <- tm_map(corpus_input, toSpace, "(\\W|^)(.+)\\s\\2")
+    # removes any words with numeric digits
+    corpus_input <- tm_map(corpus_input, toSpace, "[[:digit:]]")
+    corpus_input <- tm_map(corpus_input, lemmatize_strings)
+    input_string<- as.character(corpus_input[[1]][1])
+    #remove remaining " " after cleaning
+    input_string<- gsub("(^[[:space:]]+|[[:space:]]+$)", "", input_string)
+    
+    return(input_string)
+}
+```
+
+
+```{r next_word_model}
+NextWord <- function(input, n){
+    input <- CleanInput(input)
+    input <- unlist(strsplit(input, split = " "))
+    lenInput <- length(input)
+    next_word <- NULL #next word based on previous 3,2,1 words
+    if (lenInput >= 3 & length(next_word)==0) {
+        next_word <- Qgramdf %>%
+            separate(word, c("w1", "w2", "w3", "next_word"), sep = " ") %>%
+            filter(w3 == input[lenInput] & w2 == input[lenInput-1] & w1 == input[lenInput-2]) %>%
+            select(next_word, freq) %>%
+            group_by( next_word) %>%
+            summarize(n = sum(freq)) %>% 
+            mutate(prt_freq = n/sum(n), weighted_part_freq = 4+n/sum(n),n_gramm = "Qgramdf_pred_model") %>% 
+            arrange(desc(prt_freq))
+        
+    }
+    if (lenInput >= 2 & length(next_word$next_word)<=3) {
+        next_word3 <- Trigramdf %>%
+            separate(word, c("w1", "w2", "next_word"), sep = " ") %>%
+            filter((w2 == input[lenInput] & w1 == input[lenInput-1])) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 3+n/sum(n), n_gramm = "Trigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word3) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]) %>% 
+            arrange(desc(weighted_part_freq))
+    }
+    if (lenInput >= 1 & length(next_word$next_word)<=3) {
+        next_word2 <- Bigramdf %>%
+            separate(word, c("w1", "next_word"), sep = " ") %>%
+            filter(w1 == input[lenInput] ) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 2+n/sum(n), n_gramm = "Bigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word2) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]) %>% 
+            arrange(desc(weighted_part_freq))
+    }
+    if (length(next_word$next_word)<=3) {
+        next_word1 <- Unigramdf %>%
+            mutate(next_word = word) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 1+n/sum(n), n_gramm = "Unigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word1) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]) %>% 
+            arrange(desc(weighted_part_freq))
+        
+    }
+    return(next_word %>% 
+        arrange(desc(weighted_part_freq)) %>%
+            head(n))
+    
+}
+```
+
+
+df %>% group_by(customer_name) %>% arrange(customer_name,desc(order_values)) %>% mutate(rank2=rank(order_values))
+
+The "Tester" function will check whether the model predicts the actual completion of 4-gram from test data set as its top choce, as one of top-2 , top-3 predictions.
+The output we are interesting to get is accuracy and average run time.
+
+
+```{r}
+#Qgramdf_test[1,1]
+#unlist(strsplit(as.character(Qgramdf_test[1,1]), split = " "))
+
+Tester <- function(test){
+    accuracy_table <- NULL
+    for(i in 1:length(test)){
+        #input <- "be one of the" used for test
+        #input <- as.character(Qgramdf_test$word[5])
+        #input_last <- unlist(strsplit(input, split = " "))[lenInput]
+        
+        input <- as.character(test[i])
+        lenInput <- length(unlist(strsplit(input, split = " ")))
+        input_last <- unlist(strsplit(as.character(input), split = " "))[lenInput]
+        input_start <- paste(unlist(strsplit(as.character(input), split = " "))[1:3], collapse=" ")
+        start_time <- Sys.time()
+        ngram_prd <- NextWord(input_start, 3)
+        end_time <- Sys.time()
+        next_word_mutated <- ngram_prd %>% 
+            mutate(rank = order(order(weighted_part_freq, decreasing=TRUE))) %>%
+            select(rank, next_word) %>%
+            spread(rank, next_word) %>%
+            mutate(top1 = `1`, top2 = paste(`1`,`2`), top3 = paste(`1`,`2`,`3`), run_time = end_time - start_time)
+        accuracy_table <- rbind(accuracy_table, cbind(input, input_last, next_word_mutated) %>%
+            mutate(InTop1 = grepl(input_last, top1), 
+                   InTop2 = grepl(input_last, top2),
+                   InTop3 = grepl(input_last, top3)
+                   ))
+    }
+    
+    return(accuracy_table)
+}
+```
+
+```{r 100_random_rows}
+set.seed(6312)
+sample_test <- Qgramdf_test[sample(nrow(Qgramdf_test), 100),]
+saveRDS(sample_test, "./final/en_US/RDS_files/sample_test.Rdata")
+```
+```{r 100_random_rows_modified}
+set.seed(6312)
+sample_test <- Qgramdf_test[sample(nrow(Qgramdf_test), 100),]
+saveRDS(sample_test, "./final/en_US/RDS_files/sample_test_mdf.Rdata")
+```
+
+```{r load_sample_test}
+Qgramdf_test <- read_rds("./final/en_US/RDS_files/sample_test.Rdata")
+```
+
+```{r Tester_initial}
+
+accuracy100 <- Tester(Qgramdf_test$word)
+  saveRDS(accuracy100, "./final/en_US/RDS_files/accuracy100.Rdata")
+
+accuracy100 %>%
+    summarize(acc_Top1 = sum(InTop1)/n(), acc_Top2 = sum(InTop2)/n(), acc_Top3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+```
+
+
+
+From first model accuracy evaluation we have got pretty god accuracy results but quite long run time for one request. We will check if it is possible to decrease run time with low losses in accuracy performance. 
+1. decrease train data set.
+1.1. Limit gramms based on frequencies.
+```{r unigram_filtering}
+#loaded prepared unigram filtering:
+
+#in our model we will filter unigrams to use only those that apeared in train data set at least 10 times
+Unigramdf <- Unigramdf %>% filter(freq >= 10)
+Bigramdf <- read_rds("./final/en_US/RDS_files/Bigramdf.Rdata")
+Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+```
+
+```{r tester_1}
+accuracy100_1 <- Tester(Qgramdf_test$word)
+saveRDS(accuracy100_1, "./final/en_US/RDS_files/accuracy100_1.Rdata")
+
+accuracy100_1 %>%
+    summarize(acc_Top1 = sum(InTop1)/n(), acc_Top2 = sum(InTop2)/n(), acc_Top3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+```
+
+```{r bigram_filtering}
+#loaded prepared unigram filtering:
+#in our model we will filter unigrams to use only those that apeared in train data set at least 10 times
+#Unigramdf <- Unigramdf %>% filter(freq >= 10)
+#in our model we will filter Bigrams to use only those that apeared in train data set at least 2 times
+Bigramdf <- Bigramdf %>% filter(freq >= 2)
+#Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+#Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+```
+```{r tester_2}
+accuracy100_2 <- Tester(Qgramdf_test$word)
+saveRDS(accuracy100_2, "./final/en_US/RDS_files/accuracy100_2.Rdata")
+
+accuracy100_2 %>%
+    summarize(acc_Top1 = sum(InTop1)/n(), acc_Top2 = sum(InTop2)/n(), acc_Top3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+```
+```{r Trigram_filtering}
+#loaded prepared unigram filtering:
+#in our model we will filter unigrams to use only those that apeared in train data set at least 10 times
+#Unigramdf <- Unigramdf %>% filter(freq >= 10)
+#in our model we will filter Bigrams to use only those that apeared in train data set at least 2 times
+#Bigramdf <- Bigramdf %>% filter(freq >= 2)
+Trigramdf <- Trigramdf %>% filter(freq >= 2)
+#Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+summary(Trigramdf)
+
+```
+```{r tester_3}
+accuracy100_3 <- Tester(Qgramdf_test$word)
+saveRDS(accuracy100_3, "./final/en_US/RDS_files/accuracy100_3.Rdata")
+
+accuracy100_3 %>%
+    summarize(acc_Top1 = sum(InTop1)/n(), acc_Top2 = sum(InTop2)/n(), acc_Top3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+```
+We can se that limiting training set give significant improvements in runing time from 9.9 sec to 6.03 sec.
+with very low losses in performance of the model.
+
+We  will perform accuracy evaluation on modified test data set where we left only Qgrams that appeares in the data at lest 2 times. We will use last training data that gave us best running time performance.
+
+```{r load_sample_test_modified}
+Qgramdf_test <- read_rds("./final/en_US/RDS_files/sample_test_mdf.Rdata")
+```
+
+
+```{r Uni-Trigram_filtering_modified}
+#loaded prepared unigram filtering:
+#in our model we will filter unigrams to use only those that apeared in train data set at least 10 times
+Unigramdf <- Unigramdf %>% filter(freq >= 10)
+#in our model we will filter Bigrams to use only those that apeared in train data set at least 2 times
+Bigramdf <- Bigramdf %>% filter(freq >= 2)
+Trigramdf <- Trigramdf %>% filter(freq >= 2)
+#Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+```
+```{r tester_3}
+accuracy100_3_mdf <- Tester(Qgramdf_test$word)
+saveRDS(accuracy100_3_mdf, "./final/en_US/RDS_files/accuracy100_3_mdf.Rdata")
+
+accuracy100_3_mdf %>%
+    summarize(acc_Top1 = sum(InTop1)/n(), acc_Top2 = sum(InTop2)/n(), acc_Top3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+```
+
+Preparation for slides:
+
+```{r load_Ngram_RDS, echo=FALSE}
+Unigramdf <- read_rds("./final/en_US/RDS_files/Unigramdf.Rdata")
+Bigramdf <- read_rds("./final/en_US/RDS_files/Bigramdf.Rdata")
+Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+```
+
+```{r acc, echo=FALSE}
+training_data <- cbind(c("Unigramdf", "Bigramdf", "Trigramdf", "Qgramdf"),rbind(nrow(Unigramdf), nrow(Bigramdf), nrow(Trigramdf), nrow(Qgramdf)))
+colnames(training_data) <- c("n-gram", "count")
+#loaded prepared unigram filtering:
+#in our model we will filter unigrams to use only those that apeared in train data set at least 10 times
+Unigramdf <- Unigramdf %>% filter(freq >= 10) %>% arrange(desc(freq)) %>% head(50)
+training_data <- cbind(training_data,rbind(nrow(Unigramdf), nrow(Bigramdf), nrow(Trigramdf), nrow(Qgramdf)))
+#in our model we will filter Bigrams to use only those that apeared in train data set at least 2 times
+Bigramdf <- Bigramdf %>% filter(freq >= 2)
+training_data <- cbind(training_data,rbind(nrow(Unigramdf), nrow(Bigramdf), nrow(Trigramdf), nrow(Qgramdf)))
+#in our model we will filter Trigrams to use only those that apeared in train data set at least 2 times
+Trigramdf <- Trigramdf %>% filter(freq >= 2)
+training_data <- cbind(training_data,rbind(nrow(Unigramdf), nrow(Bigramdf), nrow(Trigramdf), nrow(Qgramdf)))
+
+colnames(training_data) <- c("n-gram", "count", "count_1", "count_2", "count_3")
+
+
+accuracy100 <- read_rds("./final/en_US/RDS_files/accuracy100.Rdata")
+accuracy100_1 <- read_rds("./final/en_US/RDS_files/accuracy100_1.Rdata")
+accuracy100_2 <- read_rds("./final/en_US/RDS_files/accuracy100_2.Rdata")
+accuracy100_3 <- read_rds("./final/en_US/RDS_files/accuracy100_3.Rdata")
+accuracy100_3_mdf <- read_rds("./final/en_US/RDS_files/accuracy100_3_mdf.Rdata")
+
+training_data <- rbind(training_data, c("run_time", mean(accuracy100$run_time), mean(accuracy100_1$run_time), mean(accuracy100_2$run_time), mean(accuracy100_3$run_time)))
+
+training_data <- rbind(training_data, c("acc_InTop1" , sum(accuracy100$InTop1)/nrow(accuracy100), sum(accuracy100_1$InTop1)/nrow(accuracy100_1), sum(accuracy100_2$InTop1)/nrow(accuracy100_2), sum(accuracy100_3$InTop1)/nrow(accuracy100_3)))
+training_data <- rbind(training_data, c("acc_InTop2" , sum(accuracy100$InTop2)/nrow(accuracy100), sum(accuracy100_1$InTop2)/nrow(accuracy100_1), sum(accuracy100_2$InTop2)/nrow(accuracy100_2), sum(accuracy100_3$InTop2)/nrow(accuracy100_3)))
+training_data <- rbind(training_data, c("acc_InTop3" , sum(accuracy100$InTop3)/nrow(accuracy100), sum(accuracy100_1$InTop3)/nrow(accuracy100_1), sum(accuracy100_2$InTop3)/nrow(accuracy100_2), sum(accuracy100_3$InTop3)/nrow(accuracy100_3)))
+
+write.csv(training_data,"./training_data_for_slides.csv")                       
+eff_result <- (1-6.33/10.25)*100
+```
+
+Low accuracy is the result that model could not predicts next word in case prefix (n-1 gram) have never been seen while training. To eliminate grams that appeare very rearly we will modify test data set.
+Evaluation on training data set contain only 4-grams that appeared at least 2 times:
+Accuracy on test data set containing phrases that appeared more then once is quite good: 
+- model top1 prediction matches test with acuuracy 48%,  
+- model top2 prediction matches test with acuuracy 59%,  
+- model top3 prediction matches test with acuuracy 64%.
+```{r acc_mdf, echo=FALSE}
+accuracy100_3_mdf <- accuracy100_3_mdf %>%
+    summarize(acc_InTop1 = sum(InTop1)/n(), acc_InTop2 = sum(InTop2)/n(), acc_InTop3 = sum(InTop3)/n(), avg_run_time = mean(run_time))
+
+write.csv(accuracy100_3_mdf,"./accuracy_for_slides.csv")
+```
+
+```{r}
+
+Unigramdf <- Unigramdf %>% filter(freq >= 10) %>% arrange(desc(freq)) %>% head(50)
+Bigramdf <- Bigramdf %>% filter(freq >= 5)
+Trigramdf <- Trigramdf %>% filter(freq >= 3)
+Qgramdf <- Qgramdf %>% filter(freq >= 2)
+saveRDS(Unigramdf, "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Shiny 1.4 - Johns Hopkins University _ Coursera_files/Next_Word_I/Unigramdf.Rdata")
+saveRDS(Bigramdf, "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Shiny 1.4 - Johns Hopkins University _ Coursera_files/Next_Word_I/Bigramdf.Rdata")
+saveRDS(Trigramdf, "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Shiny 1.4 - Johns Hopkins University _ Coursera_files/Next_Word_I/Trigramdf.Rdata")
+saveRDS(Qgramdf, "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Shiny 1.4 - Johns Hopkins University _ Coursera_files/Next_Word_I/Qgramdf.Rdata")
+
+```
+

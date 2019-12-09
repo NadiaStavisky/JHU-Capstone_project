@@ -1,0 +1,178 @@
+---
+title: "Text mining in R. Next Word prediction model"
+author: "Nadia Stavisky"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = FALSE,
+                      tidy = TRUE,
+                      tidy.opts = list(width.cutoff = 60))
+```
+
+
+```{r install_packages, eval=FALSE}
+# Install
+install.packages("tm")  # for text mining
+install.packages("SnowballC") # for text stemming
+install.packages("wordcloud") # word-cloud generator 
+install.packages("RColorBrewer") # color palettes
+install.packages("slam", type = "binary")
+install.packages("datasets")
+install.packages("tidytext")
+install.packages("RWeka") #N-Gram-based Text Categorization
+install.packages("kableExtra") #Create Awesome HTML Table
+install.packages("textstem") # lemmatize_strings
+```
+```{r load_packages}
+# Load
+library("slam")
+library("tm")
+library("SnowballC")
+library("wordcloud")
+library("RColorBrewer")
+library("fs") #dir_info func
+library("tidyverse")
+library("datasets")
+library("ggplot2")
+library("R.utils") #countLines func
+library("tidytext")
+library("RWeka") 
+library("knitr")
+library("kableExtra")
+library("textstem")
+library("readr")
+```
+
+```{r download_data}
+setwd("C:/Users/nstavisky/OneDrive - Facebook/Study/R/Course10")
+home_path <- "C:/Users/nstavisky/OneDrive - Facebook/Study/R/Course10"
+test_link <- "https://d396qusza40orc.cloudfront.net/dsscapstone/dataset/Coursera-SwiftKey.zip"
+#download.file(test_link, "./Coursera-SwiftKey.zip")
+#unzip("./Coursera-SwiftKey.zip")
+```
+
+# Unit 3 Modeling
+
+## Tasks to accomplish
+
+Build basic n-gram model - using the exploratory analysis you performed, build a basic n-gram model for predicting the next word based on the previous 1, 2, or 3 words.  
+Build a model to handle unseen n-grams - in some cases people will want to type a combination of words that does not appear in the corpora. Build a model to handle cases where a particular n-gram isn't observed.  
+
+
+```{r load_Ngram_RDS}
+Unigramdf <- read_rds("./final/en_US/RDS_files/Unigramdf.Rdata")
+Bigramdf <- read_rds("./final/en_US/RDS_files/Bigramdf.Rdata")
+Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+```
+```{r cleaning_input}
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+CleanInput <- function(input) {
+    input <- iconv(input, "latin1", "ASCII", sub="")
+    corpus_input <- VCorpus(VectorSource(input))
+    # Convert the text to lower case
+    corpus_input <- tm_map(corpus_input, content_transformer(tolower))
+    # Remove numbers
+    corpus_input <- tm_map(corpus_input, removeNumbers)
+    # Remove english common stopwords
+    #corpus_input <- tm_map(corpus_input, removeWords, stopwords("english"))
+    # Remove punctuations
+    corpus_input <- tm_map(corpus_input, removePunctuation)
+    # Eliminate extra white spaces
+    corpus_input <- tm_map(corpus_input, stripWhitespace)
+    # removes any words with 3 or more repeated letters
+    corpus_input <- tm_map(corpus_input, toSpace, "(.)\\1{2,}")
+    # removes any remaining single letter words
+    corpus_input <- tm_map(corpus_input, toSpace, "\\b(.)\\b")
+    # removes any repeated prases
+    corpus_input <- tm_map(corpus_input, toSpace, "(\\W|^)(.+)\\s\\2")
+    # removes any words with numeric digits
+    corpus_input <- tm_map(corpus_input, toSpace, "[[:digit:]]")
+    corpus_input <- tm_map(corpus_input, lemmatize_strings)
+    input_string<- as.character(corpus_input[[1]][1])
+    #remove remaining " " after cleaning
+    input_string<- gsub("(^[[:space:]]+|[[:space:]]+$)", "", input_string)
+    
+    return(input_string)
+}
+#install.packages("qdapDictionaries")
+#library(qdapDictionaries)
+#data(preposition)
+
+#CleanInput("I am so proud")
+#CleanInput("===!!!@@@")
+```
+
+
+
+```{r next_word_model}
+NextWord <- function(input){
+    input <- CleanInput(input)
+    input <- unlist(strsplit(input, split = " "))
+    lenInput <- length(input)
+    next_word <- NULL #next word based on previous 3,2,1 words
+    if (lenInput >= 3 & length(next_word)==0) {
+        next_word <- Qgramdf %>%
+            separate(word, c("w1", "w2", "w3", "next_word"), sep = " ") %>%
+            filter(w3 == input[lenInput] & w2 == input[lenInput-1] & w1 == input[lenInput-2]) %>%
+            select(next_word, freq) %>%
+            group_by( next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 4+n/sum(n),n_gramm = "Qgramdf") %>% arrange(desc(prt_freq))
+    }
+    if (lenInput >= 2 & length(next_word$next_word)==0) {
+        next_word <- Trigramdf %>%
+            separate(word, c("w1", "w2", "next_word"), sep = " ") %>%
+            filter((w2 == input[lenInput] & w1 == input[lenInput-1])) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 3+n/sum(n), n_gramm = "Trigramdf") %>% arrange(desc(prt_freq))
+    }
+    if (lenInput >= 1 & length(next_word$next_word)==0) {
+        next_word <- Bigramdf %>%
+            separate(word, c("w1", "next_word"), sep = " ") %>%
+            filter(w1 == input[lenInput] ) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 2+n/sum(n), n_gramm = "Bigramdf") %>% arrange(desc(prt_freq))
+    }
+    if (length(next_word$next_word)==0) {
+        next_word <- Unigramdf %>%
+            mutate(next_word = word) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 1+n/sum(n), n_gramm = "Unigramdf") %>% arrange(desc(prt_freq))
+    }
+    return(next_word)
+    print(n_gramm)
+}
+```
+
+```{r}
+Quizzer <- function(input, opt){
+    opt <- CleanInput(paste(opt[1],opt[2],opt[3], opt[4]))
+    opt <- unlist(strsplit(opt, split = " "))
+    ngram_prd <- NextWord(input)
+    ngram_prd <- ngram_prd %>%
+        filter(next_word %in% opt)
+    if(nrow(ngram_prd)==0){
+        ngram_prd <- Unigramdf %>%
+    filter(word %in% opt)
+    }
+    return(ngram_prd)
+}
+```
+
+##Questions to consider
+
+How can you efficiently store an n-gram model (think Markov Chains)?  
+How can you use the knowledge about word frequencies to make your model smaller and more efficient?  
+How many parameters do you need (i.e. how big is n in your n-gram model)?  
+Can you think of simple ways to "smooth" the probabilities (think about giving all n-grams a non-zero probability even if they aren't observed in the data) ?  
+How do you evaluate whether your model is any good?  
+How can you use backoff models to estimate the probability of unobserved n-grams?  
+
+

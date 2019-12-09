@@ -1,0 +1,325 @@
+--- 
+title: "Text mining in R. Quiz 2 & 3"
+author: "Nadia Stavisky"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = FALSE,
+                      tidy = TRUE,
+                      tidy.opts = list(width.cutoff = 60))
+```
+
+```{r load_packages}
+# Load
+library("tidyverse")
+library("knitr")
+library("kableExtra")
+library("textstem")
+library("readr")
+library("tm")
+```
+
+# Unit 3
+
+```{r load_Ngram_RDS}
+Unigramdf <- read_rds("./final/en_US/RDS_files/Unigramdf.Rdata")
+Bigramdf <- read_rds("./final/en_US/RDS_files/Bigramdf.Rdata")
+Trigramdf <- read_rds("./final/en_US/RDS_files/Trigramdf.Rdata")
+Qgramdf <- read_rds("./final/en_US/RDS_files/Qgramdf.Rdata")
+
+```
+
+```{r cleaning_input}
+toSpace <- content_transformer(function (x , pattern ) gsub(pattern, " ", x))
+CleanInput <- function(input) {
+    input <- iconv(input, "latin1", "ASCII", sub="")
+    corpus_input <- VCorpus(VectorSource(input))
+    # Convert the text to lower case
+    corpus_input <- tm_map(corpus_input, content_transformer(tolower))
+    # Remove numbers
+    corpus_input <- tm_map(corpus_input, removeNumbers)
+    # Remove english common stopwords
+    #corpus_input <- tm_map(corpus_input, removeWords, stopwords("english"))
+    # Remove punctuations
+    corpus_input <- tm_map(corpus_input, removePunctuation)
+    # Eliminate extra white spaces
+    corpus_input <- tm_map(corpus_input, stripWhitespace)
+    # removes any words with 3 or more repeated letters
+    corpus_input <- tm_map(corpus_input, toSpace, "(.)\\1{2,}")
+    # removes any remaining single letter words
+    corpus_input <- tm_map(corpus_input, toSpace, "\\b(.)\\b")
+    # removes any repeated prases
+    corpus_input <- tm_map(corpus_input, toSpace, "(\\W|^)(.+)\\s\\2")
+    # removes any words with numeric digits
+    corpus_input <- tm_map(corpus_input, toSpace, "[[:digit:]]")
+    corpus_input <- tm_map(corpus_input, lemmatize_strings)
+    input_string<- as.character(corpus_input[[1]][1])
+    #remove remaining " " after cleaning
+    input_string<- gsub("(^[[:space:]]+|[[:space:]]+$)", "", input_string)
+    
+    return(input_string)
+}
+#install.packages("qdapDictionaries")
+#library(qdapDictionaries)
+#data(preposition)
+
+#CleanInput("I am so proud")
+#CleanInput("===!!!@@@")
+```
+
+
+
+```{r next_word_model}
+NextWord <- function(input){
+    input <- CleanInput(input)
+    input <- unlist(strsplit(input, split = " "))
+    lenInput <- length(input)
+    next_word <- NULL #next word based on previous 3,2,1 words
+    if (lenInput >= 3 & length(next_word)==0) {
+        next_word <- Qgramdf %>%
+            separate(word, c("w1", "w2", "w3", "next_word"), sep = " ") %>%
+            filter(w3 == input[lenInput] & w2 == input[lenInput-1] & w1 == input[lenInput-2]) %>%
+            select(next_word, freq) %>%
+            group_by( next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 4+n/sum(n),n_gramm = "Qgramdf_pred_model") %>% arrange(desc(prt_freq))
+        
+    }
+    if (lenInput >= 2 & length(next_word$next_word)<=3) {
+        next_word3 <- Trigramdf %>%
+            separate(word, c("w1", "w2", "next_word"), sep = " ") %>%
+            filter((w2 == input[lenInput] & w1 == input[lenInput-1])) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 3+n/sum(n), n_gramm = "Trigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word3) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]
+                      )
+    }
+    if (lenInput >= 1 & length(next_word$next_word)<=3) {
+        next_word2 <- Bigramdf %>%
+            separate(word, c("w1", "next_word"), sep = " ") %>%
+            filter(w1 == input[lenInput] ) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 2+n/sum(n), n_gramm = "Bigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word2) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]
+                      )
+    }
+    if (length(next_word$next_word)<=3) {
+        next_word1 <- Unigramdf %>%
+            mutate(next_word = word) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 1+n/sum(n), n_gramm = "Unigramdf_pred_model") %>% arrange(desc(prt_freq))
+        next_word <- rbind(next_word, next_word1) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]
+                      )
+        
+    }
+    return(next_word)
+    
+}
+```
+
+```{r Quizzer}
+Quizzer <- function(input, opt){
+    opt <- CleanInput(paste(opt[1],opt[2],opt[3], opt[4]))
+    opt <- unlist(strsplit(opt, split = " "))
+    ngram_prd <- NextWord(input)
+    ngram_prd <- ngram_prd %>%
+        filter(next_word %in% opt) %>% arrange(desc(weighted_part_freq))
+    if(nrow(ngram_prd)<4){
+        ngram_prd1 <- Unigramdf %>%
+    filter(word %in% opt) %>%
+            mutate(next_word = word) %>%
+            select(next_word, freq) %>%
+            group_by(next_word) %>%
+            summarize(n = sum(freq)) %>% mutate(prt_freq = n/sum(n), weighted_part_freq = 1+n/sum(n), n_gramm = "Unigram_added") %>% arrange(desc(prt_freq))
+        ngram_prd <- rbind(ngram_prd, ngram_prd1) %>% 
+            group_by(next_word) %>%
+            summarize(n = n[which(weighted_part_freq == max(weighted_part_freq))],
+                      prt_freq = prt_freq[which(weighted_part_freq == max(weighted_part_freq))],
+                      weighted_part_freq = max(weighted_part_freq),
+                      n_gramm = n_gramm[which(weighted_part_freq == max(weighted_part_freq))]
+                      ) %>% arrange(desc(weighted_part_freq))
+    }
+    
+    kable(ngram_prd) %>%
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"))
+}
+```
+
+## Quiz2.  
+1. "The guy in front of me just bought a pound of bacon, a bouquet, and a case of"
+```{r Q2 test#1}
+input <- "The guy in front of me just bought a pound of bacon, a bouquet, and a case of"
+opt <- c("soda", "beer", "cheese", "pretzels")
+Quizzer(input, opt)
+```
+answer: beer (top result generated with prediction model)  
+2. "You're the reason why I smile everyday. Can you follow me please? It would mean the"
+```{r Q2 test#2}
+input <- "You're the reason why I smile everyday. Can you follow me please? It would mean the"
+opt <- c("world", "universe", "most", "best")
+Quizzer(input, opt)
+```
+answer: world  (top result generated with prediction model)  
+3. "Hey sunshine, can you follow me and make me the"
+```{r Q2 test#3}
+input <- "Hey sunshine, can you follow me and make me the"
+opt <- c("saddiest", "smelliest", "happiest", "bluest")
+Quizzer(input, opt)
+```
+answer: happiest  (top result generated with prediction model)  
+4. "Very early observations on the Bills game: Offense still struggling but the"
+```{r Q2 test#4}
+input <- "Very early observations on the Bills game: Offense still struggling but the"
+opt <- c("defense", "crowd", "referees", "players")
+Quizzer(input, opt)
+```
+answer: players (top result generated with prediction model) - not accepted in quiz  
+defense (choosed from unigramm)  - accepted
+5. "Go on a romantic date at the"
+```{r Q2 test#5}
+input <- "Go on a romantic date at the"
+opt <- c("beach", "grocery", "movies", "mall")
+Quizzer(input, opt)
+```
+answer: beach (top result generated with prediction model)  
+6. "Well I'm pretty sure my granny has some old bagpipes in her garage I'll dust them off and be on my"
+```{r Q2 test#6}
+input <- "Well I'm pretty sure my granny has some old bagpipes in her garage I'll dust them off and be on my"
+opt <- c("horse", "way", "motorcycle", "phone")
+Quizzer(input, opt)
+```
+answer: way  (top result generated with prediction model)   
+7. "Ohhhhh #PointBreak is on tomorrow. Love that film and haven't seen it in quite some"
+```{r Q2 test#7}
+input <- "Ohhhhh #PointBreak is on tomorrow. Love that film and haven't seen it in quite some"
+opt <- c("time", "years", "weeks", "thing")
+Quizzer(input, opt)
+```
+answer: time  (top result generated with prediction model)   
+8. "After the ice bucket challenge Louis will push his long wet hair out of his eyes with his little"
+```{r Q2 test#8}
+input <- "After the ice bucket challenge Louis will push his long wet hair out of his eyes with his little"
+opt <- c("eyes", "ears", "toes", "fingers")
+Quizzer(input, opt)
+```
+answer: fingers (selected from unigrams)  
+9. "Be grateful for the good times and keep the faith during the"
+```{r Q2 test#9}
+input <- "Be grateful for the good times and keep the faith during the"
+opt <- c("bad", "worse", "hard", "sad")
+Quizzer(input, opt)
+```
+answer: bad (answer selected from unigram)  
+10. "If this isn't the cutest thing you've ever seen, then you must be"
+```{r Q2 test#10}
+input <- "If this isn't the cutest thing you've ever seen, then you must be"
+opt <- c("insane", "callous", "insantive", "asleep")
+Quizzer(input, opt)
+```
+answer: insane (answer selected from unigram)
+
+
+
+
+# Unit 4
+
+## Quiz3. 
+1. "When you breathe, I want to be the air for you. I'll be there for you, I'd live and I'd"
+```{r Q3 test#1}
+input <- "When you breathe, I want to be the air for you. I'll be there for you, I'd live and I'd"
+opt <- c("give", "sleep", "die", "eat")
+Quizzer(input, opt)
+```
+answer: die (answer selected form the unigram)  
+2. "Guy at my table's wife got up to go to the bathroom and I asked about dessert and he started telling me about his"
+```{r Q3 test#2}
+input <- "Guy at my table's wife got up to go to the bathroom and I asked about dessert and he started telling me about his"
+opt <- c("horticultural", "spiritual", "financial", "marital")
+Quizzer(input, opt)
+
+```
+answer: marital (answer selected form the unigram)  
+3. "I'd give anything to see arctic monkeys this"
+```{r Q3 test#3}
+input <- "I'd give anything to see arctic monkeys this"
+opt <- c("month", "decade", "weekend", "morning")
+Quizzer(input, opt)
+```
+answer: morning (top answer generated with prediction model) - not accepted with quiz  
+weekend (selected second chose)
+4. "alking to your mom has the same effect as a hug and helps reduce your"
+```{r Q3 test#4}
+input <- "alking to your mom has the same effect as a hug and helps reduce your"
+opt <- c("sleepiness", "hunger", "stress", "happiness")
+Quizzer(input, opt)
+```
+answer: stress  (top answer generated with prediction model)  
+5. "When you were in Holland you were like 1 inch away from me but you hadn't time to take a"
+```{r Q3 test#5}
+input <- "When you were in Holland you were like 1 inch away from me but you hadn't time to take a"
+opt <- c("walk", "minute", "look", "picture")
+Quizzer(input, opt)
+
+```
+answer: picture (answer selected from the unigram)  
+6. "I'd just like all of these questions answered, a presentation of evidence, and a jury to settle the"
+```{r Q3 test#6}
+input <- "I'd just like all of these questions answered, a presentation of evidence, and a jury to settle the"
+opt <- c("case", "account", "matter", "incident")
+Quizzer(input, opt)
+```
+answer: case  (top answer generated with prediction model)  
+7. "I can't deal with unsymetrical things. I can't even hold an uneven number of bags of groceries in each"
+```{r Q3 test#7}
+input <- "I can't deal with unsymetrical things. I can't even hold an uneven number of bags of groceries in each"
+opt <- c("hand", "toe", "finger", "arm")
+Quizzer(input, opt)
+```
+answer: hand (answer selected from the unigram)  
+8. "Every inch of you is perfect from the bottom to the"
+```{r Q3 test#8}
+input <- "Every inch of you is perfect from the bottom to the"
+opt <- c("middle", "center", "side", "top")
+Quizzer(input, opt)
+
+```
+answer: top  (top answer generated with prediction model)  
+9. "I'm thankful my childhood was filled with imagination and bruises from playing"
+```{r Q3 test#9}
+input <- "I'm thankful my childhood was filled with imagination and bruises from playing"
+opt <- c("outside", "inside", "daily", "weekly")
+Quizzer(input, opt)
+```
+answer: outside (top answer generated with prediction model)  
+10. "I like how the same people are in almost all of Adam Sandler's"
+```{r Q3 test#10}
+input <- "I like how the same people are in almost all of Adam Sandler's"
+opt <- c("novels", "stories", "movies", "pictures")
+Quizzer(input, opt)
+```
+answer: movies selected second option from the prediction model
+
+
+A
